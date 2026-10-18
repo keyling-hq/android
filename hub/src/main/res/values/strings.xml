@@ -39,6 +39,20 @@
     <string name="detail_layout">Layout %1$s</string>
     <string name="detail_typing">Typing…</string>
 
+    <string name="state_typing_for">Typing for %1$s</string>
+
+    <string name="channel_approvals">App approvals</string>
+    <string name="approval_title">Allow %1$s to type?</string>
+    <string name="approval_text">%1$s wants to type on the computer the dongle is plugged into. Allow it only if you trust it: it can type anything, including commands.</string>
+    <string name="approval_allow">Allow</string>
+    <string name="approval_deny">Deny</string>
+
+    <string name="apps_title">Apps</string>
+    <string name="apps_hint">Apps that asked to type through Keyling. Remove one to be asked again.</string>
+    <string name="apps_allowed">Allowed</string>
+    <string name="apps_denied">Denied</string>
+    <string name="apps_remove">Remove</string>
+
     <string name="test_title">Test</string>
     <string name="test_hint">Text to type</string>
     <string name="button_type">Type</string>

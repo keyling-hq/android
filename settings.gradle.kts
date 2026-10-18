@@ -16,4 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "keyling-android"
 
-include(":client", ":hub")
+include(":client", ":hub", ":testclient")

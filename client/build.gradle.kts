@@ -9,4 +9,8 @@ android {
     defaultConfig {
         minSdk = 31
     }
+
+    buildFeatures {
+        aidl = true
+    }
 }

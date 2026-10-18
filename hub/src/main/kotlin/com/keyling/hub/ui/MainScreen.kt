@@ -42,7 +42,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import bridge.Result
+import com.keyling.hub.HubApp
 import com.keyling.hub.R
+import com.keyling.hub.api.ApprovalStore
 import com.keyling.hub.dongle.DongleController
 import com.keyling.hub.dongle.DongleState
 import kotlinx.coroutines.launch
@@ -130,6 +132,28 @@ fun MainScreen(controller: DongleController) {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
             if (state is DongleState.Connected) TestCard(controller)
+            AppsCard((context.applicationContext as HubApp).approvals)
+        }
+    }
+}
+
+@Composable
+private fun AppsCard(approvals: ApprovalStore) {
+    val apps by approvals.approvals.collectAsState()
+    if (apps.isEmpty()) return
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.apps_title), style = MaterialTheme.typography.titleMedium)
+            Detail(stringResource(R.string.apps_hint))
+            apps.forEach { app ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(app.label, style = MaterialTheme.typography.bodyLarge)
+                        Detail(stringResource(if (app.allowed) R.string.apps_allowed else R.string.apps_denied))
+                    }
+                    TextButton({ approvals.remove(app.packageName) }) { Text(stringResource(R.string.apps_remove)) }
+                }
+            }
         }
     }
 }

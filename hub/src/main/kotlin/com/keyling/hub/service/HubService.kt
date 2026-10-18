@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -35,9 +36,11 @@ class HubService : Service() {
             NotificationChannel(CHANNEL_ID, getString(R.string.channel_connection), NotificationManager.IMPORTANCE_LOW),
         )
         scope.launch {
-            dongle.state.combine(dongle.running) { state, running -> state to running }.collect { (state, running) ->
-                if (running) {
-                    notifications.notify(NOTIFICATION_ID, notification(state))
+            combine(dongle.state, dongle.running, dongle.status, dongle.typingClient) { state, running, status, client ->
+                if (!running) null else notificationText(state, status?.typing == true, client)
+            }.distinctUntilChanged().collect { text ->
+                if (text != null) {
+                    notifications.notify(NOTIFICATION_ID, notification(text))
                 } else {
                     stopSelf()
                 }
@@ -45,8 +48,15 @@ class HubService : Service() {
         }
     }
 
+    private fun notificationText(state: DongleState, typing: Boolean, client: String?): String = when {
+        state !is DongleState.Connected -> getString(R.string.state_connecting)
+        typing && client != null -> getString(R.string.state_typing_for, client)
+        else -> getString(R.string.state_connected)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, notification(dongle.state.value), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        val text = notificationText(dongle.state.value, false, null)
+        startForeground(NOTIFICATION_ID, notification(text), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         if (intent?.action == ACTION_DISCONNECT) dongle.disconnect()
         return START_NOT_STICKY
     }
@@ -58,21 +68,18 @@ class HubService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun notification(state: DongleState): Notification {
+    private fun notification(text: String): Notification {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
         val disconnect = PendingIntent.getService(
             this, 0, Intent(this, HubService::class.java).setAction(ACTION_DISCONNECT), PendingIntent.FLAG_IMMUTABLE,
         )
-        val text = when (state) {
-            is DongleState.Connected -> R.string.state_connected
-            else -> R.string.state_connecting
-        }
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(getString(text))
+            .setContentText(text)
+            .setOnlyAlertOnce(true)
             .setContentIntent(open)
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, getString(R.string.action_disconnect), disconnect).build())

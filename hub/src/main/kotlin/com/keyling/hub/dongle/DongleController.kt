@@ -112,6 +112,11 @@ class DongleController(private val context: Context) {
     /** True while the connection loop runs. */
     val running: StateFlow<Boolean> = _running.asStateFlow()
 
+    private val _typingClient = MutableStateFlow<String?>(null)
+
+    /** The app whose text was sent last, or null for text from the hub itself. */
+    val typingClient: StateFlow<String?> = _typingClient.asStateFlow()
+
     val isPaired: Boolean get() = store.address != null
 
     init {
@@ -168,7 +173,12 @@ class DongleController(private val context: Context) {
         return (state as? DongleState.Connected)?.session ?: throw DongleUnavailableException(state)
     }
 
-    suspend fun typeText(text: String): Result = session().typeText(text)
+    /** Types [text]; [client] names the app it came from, shown while the dongle types it. */
+    suspend fun typeText(text: String, client: String? = null): Result {
+        val session = session()
+        _typingClient.value = client
+        return session.typeText(text)
+    }
 
     suspend fun abort() {
         (_state.value as? DongleState.Connected)?.session?.abort()
