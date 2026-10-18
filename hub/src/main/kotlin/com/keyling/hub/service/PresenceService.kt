@@ -4,6 +4,7 @@ import android.companion.AssociationInfo
 import android.companion.CompanionDeviceService
 import android.companion.DevicePresenceEvent
 import android.os.Build
+import android.util.Log
 import com.keyling.hub.dongle
 
 /**
@@ -43,6 +44,7 @@ class PresenceService : CompanionDeviceService() {
     }
 
     private fun appeared() {
+        Log.i("PresenceService", "dongle appeared")
         if (dongle.isPaired) dongle.connect()
     }
 

@@ -19,6 +19,7 @@ import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import bridge.Hello
 import bridge.Result
@@ -54,7 +55,9 @@ sealed interface DongleState {
     data object Idle : DongleState
     data object Pairing : DongleState
     data object Connecting : DongleState
-    class Connected(val hello: Hello, val session: Session) : DongleState
+    class Connected(val hello: Hello, val session: Session) : DongleState {
+        override fun toString() = "Connected(firmware ${hello.firmware_version})"
+    }
 
     /** The dongle refuses this phone's bond, usually after "Forget phone" on the dongle. */
     data object BondLost : DongleState
@@ -70,6 +73,7 @@ private const val TAG = "DongleController"
 private const val HELLO_TIMEOUT_MS = 5_000L
 private const val BOND_TIMEOUT_MS = 90_000L
 private const val BOND_RETRY_GRACE_MS = 5_000L
+private const val BOND_POLL_MS = 500L
 
 /** Hidden extra of ACTION_BOND_STATE_CHANGED with the reason a bond attempt ended. */
 private const val EXTRA_UNBOND_REASON = "android.bluetooth.device.extra.REASON"
@@ -110,6 +114,10 @@ class DongleController(private val context: Context) {
 
     val isPaired: Boolean get() = store.address != null
 
+    init {
+        scope.launch { _state.collect { Log.i(TAG, "state $it") } }
+    }
+
     private fun hasPermission() =
         context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
@@ -138,6 +146,7 @@ class DongleController(private val context: Context) {
     /** Ends the connection loop and closes the connection. */
     @Synchronized
     fun disconnect() {
+        Log.i(TAG, "disconnect requested", Throwable("caller"))
         loop?.cancel()
         loop = null
         _state.value = restingState()
@@ -145,6 +154,7 @@ class DongleController(private val context: Context) {
 
     /** Called when the system no longer sees the dongle: stop retrying unless connected. */
     fun onDongleDisappeared() {
+        Log.i(TAG, "dongle disappeared in state ${_state.value}")
         if (_state.value !is DongleState.Connected) disconnect()
     }
 
@@ -248,7 +258,13 @@ class DongleController(private val context: Context) {
      * dialog), starts presence observation and connects. Returns false if bonding failed.
      */
     suspend fun onAssociationResult(data: Intent): Boolean {
-        val (address, id) = parseAssociation(data) ?: return false
+        val association = parseAssociation(data)
+        if (association == null) {
+            Log.i(TAG, "no device in the picker result")
+            return false
+        }
+        val (address, id) = association
+        Log.i(TAG, "associated with $address (id $id), bonding")
         _state.value = DongleState.Pairing
         val device = bluetooth.adapter.getRemoteDevice(address)
         val bonded = withTimeoutOrNull(BOND_TIMEOUT_MS) { bond(device) } ?: false
@@ -283,7 +299,7 @@ class DongleController(private val context: Context) {
     /**
      * Bonds with [device]. A failed attempt may be followed by another one (the phone and the
      * dongle both start pairing on connect), so a failure only counts once no new attempt starts
-     * within [BOND_RETRY_GRACE_MS].
+     * within [BOND_RETRY_GRACE_MS]. The bond state is also polled in case a broadcast is missed.
      */
     private suspend fun bond(device: BluetoothDevice): Boolean {
         if (device.bondState == BluetoothDevice.BOND_BONDED) return true
@@ -304,9 +320,11 @@ class DongleController(private val context: Context) {
                 states.trySend(state)
             }
         }
+        // The Bluetooth stack sends this protected broadcast from its own process, which a
+        // not-exported receiver may not get; no app can forge it.
         val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             context.registerReceiver(receiver, filter)
         }
@@ -315,17 +333,17 @@ class DongleController(private val context: Context) {
                 Log.i(TAG, "createBond refused, bond state ${device.bondState}")
                 return device.bondState == BluetoothDevice.BOND_BONDED
             }
-            var failed = false
+            var failedAt = 0L
             while (true) {
-                val state = if (failed) {
-                    withTimeoutOrNull(BOND_RETRY_GRACE_MS) { states.receive() }
-                } else {
-                    states.receive()
-                } ?: return device.bondState == BluetoothDevice.BOND_BONDED
+                val state = withTimeoutOrNull(BOND_POLL_MS) { states.receive() } ?: device.bondState
                 when (state) {
                     BluetoothDevice.BOND_BONDED -> return true
-                    BluetoothDevice.BOND_BONDING -> failed = false
-                    BluetoothDevice.BOND_NONE -> failed = true
+                    BluetoothDevice.BOND_BONDING -> failedAt = 0L
+                    BluetoothDevice.BOND_NONE -> if (failedAt == 0L) failedAt = SystemClock.elapsedRealtime()
+                }
+                if (failedAt != 0L && SystemClock.elapsedRealtime() - failedAt >= BOND_RETRY_GRACE_MS) {
+                    Log.i(TAG, "bonding failed")
+                    return false
                 }
             }
         } finally {
