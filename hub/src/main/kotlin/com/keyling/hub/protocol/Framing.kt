@@ -13,7 +13,7 @@ fun writeSize(mtu: Int): Int = minOf(mtu - 3, MAX_WRITE_BYTES)
 private const val LENGTH_BYTES = 2
 private const val MAX_PAYLOAD = 0xFFFF
 
-class ProtocolException(message: String, cause: Throwable? = null) : IOException(message, cause)
+open class ProtocolException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
 /**
  * Encodes [request] as a CMD frame: `[length: u16 little endian][Request]`.
