@@ -18,10 +18,12 @@ import com.keyling.hub.protocol.writeSize
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
@@ -43,8 +45,12 @@ private const val DISCONNECT_TIMEOUT_MS = 2000L
 class GattException(operation: String, val status: Int) :
     IOException("$operation failed (GATT status $status)")
 
-/** The connection went down; [status] is the status Android reported with it. */
-class LinkLostException(val status: Int) : IOException("link lost (GATT status $status)")
+/**
+ * The connection went down; [status] is the status Android reported with it. [wasConnected] is
+ * false when the connection never came up.
+ */
+class LinkLostException(val status: Int, val wasConnected: Boolean = true) :
+    IOException("link lost (GATT status $status)")
 
 /**
  * A GATT connection to the dongle's bridge service.
@@ -77,7 +83,7 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
                 BluetoothProfile.STATE_CONNECTED -> connected.complete(Unit)
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     gatt.close()
-                    val lost = LinkLostException(status)
+                    val lost = LinkLostException(status, wasConnected = connected.isCompleted)
                     connected.completeExceptionally(lost)
                     op?.completeExceptionally(lost)
                     session?.close(lost)
@@ -148,7 +154,7 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
                 link.connected.await()
                 link.setUp()
             } catch (e: Throwable) {
-                link.disconnect()
+                withContext(NonCancellable) { link.disconnect() }
                 throw e
             }
             return link

@@ -1,4 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Keyling</string>
+
+    <string name="channel_connection">Dongle connection</string>
+    <string name="action_disconnect">Disconnect</string>
+
+    <string name="state_not_paired">No dongle paired</string>
+    <string name="state_no_permission">Bluetooth permission needed</string>
+    <string name="state_bluetooth_off">Bluetooth is off</string>
+    <string name="state_idle">Not connected</string>
+    <string name="state_pairing">Pairing…</string>
+    <string name="state_connecting">Connecting…</string>
+    <string name="state_connected">Connected</string>
+    <string name="state_bond_lost">The dongle no longer recognises this phone</string>
+    <string name="state_phone_bond_missing">This phone is no longer paired with the dongle</string>
+
+    <string name="hint_not_paired">Plug in the dongle and tap Pair. If the dongle is already paired with another phone, open \"Pair new phone\" on it first.</string>
+    <string name="hint_bond_lost">The dongle was probably told to forget this phone. Remove the dongle in Bluetooth settings, then forget it here and pair again.</string>
+    <string name="hint_phone_bond_missing">The dongle was removed from Bluetooth settings. Forget it here and pair again.</string>
+    <string name="hint_remove_bond">Also remove the dongle in Bluetooth settings before pairing it again.</string>
+    <string name="pairing_failed">Pairing failed: %1$s</string>
+    <string name="pairing_not_completed">Pairing didn\'t complete. Check the passkey shown on the dongle and try again.</string>
+    <string name="permission_denied">Keyling needs the Nearby devices permission to talk to the dongle.</string>
+
+    <string name="button_pair">Pair</string>
+    <string name="button_connect">Connect</string>
+    <string name="button_disconnect">Disconnect</string>
+    <string name="button_cancel">Cancel</string>
+    <string name="button_forget">Forget</string>
+    <string name="button_retry">Retry</string>
+    <string name="button_grant">Grant permission</string>
+    <string name="button_bluetooth_settings">Bluetooth settings</string>
+
+    <string name="detail_firmware">Firmware %1$s</string>
+    <string name="detail_usb_mounted">Plugged into a computer</string>
+    <string name="detail_usb_not_mounted">Not recognised by a computer</string>
+    <string name="detail_layout">Layout %1$s</string>
+    <string name="detail_typing">Typing…</string>
+
+    <string name="test_title">Test</string>
+    <string name="test_hint">Text to type</string>
+    <string name="button_type">Type</string>
+    <string name="button_abort">Abort</string>
+    <string name="result_typed">Sent</string>
+    <string name="result_failed">Failed: %1$s</string>
 </resources>
