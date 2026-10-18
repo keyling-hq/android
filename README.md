@@ -11,6 +11,8 @@ This repository holds:
   be approved by the user in the hub before they can type.
 - **`client/`**, the small library other apps link to talk to the hub. It contains no Bluetooth or
   protocol code.
+- **`testclient/`**, a small app that exercises the client library: binding, approval, typing
+  and state changes. It's for development and doubles as sample code.
 - **`proto/`**, a Git submodule with
   [keyling-hq/protocol](https://github.com/keyling-hq/protocol), the phone ↔ dongle protocol
   (`bridge.proto`). The hub generates its protocol classes from it at build time.
@@ -81,6 +83,7 @@ On Windows use `gradlew.bat`, elsewhere `./gradlew`:
 ```sh
 gradlew.bat :hub:assembleDebug     # APK in hub/build/outputs/apk/debug/
 gradlew.bat :hub:installDebug      # build and install on a connected phone (USB debugging on)
+gradlew.bat :testclient:installDebug   # the API test client
 gradlew.bat test                   # unit tests
 ```
 
