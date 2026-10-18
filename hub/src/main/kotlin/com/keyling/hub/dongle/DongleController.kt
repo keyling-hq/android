@@ -410,6 +410,6 @@ class DongleController(private val context: Context) {
 
     /** Re-reads permissions and pairing, for when the app returns to the foreground. */
     fun refresh() {
-        if (!_running.value) _state.value = restingState()
+        if (!_running.value && _state.value != DongleState.Pairing) _state.value = restingState()
     }
 }

@@ -214,6 +214,7 @@ private fun stateText(state: DongleState): Int = when (state) {
 
 private fun hintText(state: DongleState): Int? = when (state) {
     DongleState.NotPaired -> R.string.hint_not_paired
+    DongleState.Pairing -> R.string.hint_pairing
     DongleState.BondLost -> R.string.hint_bond_lost
     DongleState.PhoneBondMissing -> R.string.hint_phone_bond_missing
     else -> null

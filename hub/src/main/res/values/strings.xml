@@ -16,6 +16,7 @@
     <string name="state_phone_bond_missing">This phone is no longer paired with the dongle</string>
 
     <string name="hint_not_paired">Plug in the dongle and tap Pair. If the dongle is already paired with another phone, open \"Pair new phone\" on it first.</string>
+    <string name="hint_pairing">When Android asks for a code, enter the 6-digit passkey shown on the dongle.</string>
     <string name="hint_bond_lost">The dongle was probably told to forget this phone. Remove the dongle in Bluetooth settings, then forget it here and pair again.</string>
     <string name="hint_phone_bond_missing">The dongle was removed from Bluetooth settings. Forget it here and pair again.</string>
     <string name="hint_remove_bond">Also remove the dongle in Bluetooth settings before pairing it again.</string>
