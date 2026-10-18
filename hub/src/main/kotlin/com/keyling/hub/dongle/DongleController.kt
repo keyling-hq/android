@@ -28,13 +28,13 @@ import com.keyling.hub.ble.BridgeUuids
 import com.keyling.hub.ble.LinkLostException
 import com.keyling.hub.protocol.Session
 import com.keyling.hub.service.HubService
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -69,6 +69,10 @@ class DongleUnavailableException(val state: DongleState) :
 private const val TAG = "DongleController"
 private const val HELLO_TIMEOUT_MS = 5_000L
 private const val BOND_TIMEOUT_MS = 90_000L
+private const val BOND_RETRY_GRACE_MS = 5_000L
+
+/** Hidden extra of ACTION_BOND_STATE_CHANGED with the reason a bond attempt ended. */
+private const val EXTRA_UNBOND_REASON = "android.bluetooth.device.extra.REASON"
 private const val CLIENT_CONNECT_TIMEOUT_MS = 15_000L
 private val RECONNECT_DELAYS_MS = longArrayOf(1_000, 3_000, 10_000)
 /** Connections dropped before Hello in a row that mean the dongle refuses this phone. */
@@ -178,6 +182,7 @@ class DongleController(private val context: Context) {
                 try {
                     val session = link.startSession(scope)
                     val hello = withTimeout(HELLO_TIMEOUT_MS) { session.hello() }
+                    Log.i(TAG, "session ready: firmware ${hello.firmware_version}, capabilities ${hello.capabilities}")
                     gotHello = true
                     failures = 0
                     refusals = 0
@@ -275,9 +280,14 @@ class DongleController(private val context: Context) {
         return device.address to DongleStore.NO_ASSOCIATION_ID
     }
 
+    /**
+     * Bonds with [device]. A failed attempt may be followed by another one (the phone and the
+     * dongle both start pairing on connect), so a failure only counts once no new attempt starts
+     * within [BOND_RETRY_GRACE_MS].
+     */
     private suspend fun bond(device: BluetoothDevice): Boolean {
         if (device.bondState == BluetoothDevice.BOND_BONDED) return true
-        val result = CompletableDeferred<Boolean>()
+        val states = Channel<Int>(Channel.UNLIMITED)
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 val changed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -287,10 +297,11 @@ class DongleController(private val context: Context) {
                     intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                 }
                 if (changed?.address != device.address) return
-                when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)) {
-                    BluetoothDevice.BOND_BONDED -> result.complete(true)
-                    BluetoothDevice.BOND_NONE -> result.complete(false)
-                }
+                val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
+                val previous = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR)
+                val reason = intent.getIntExtra(EXTRA_UNBOND_REASON, -1)
+                Log.i(TAG, "bond state $previous -> $state, reason $reason")
+                states.trySend(state)
             }
         }
         val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
@@ -300,8 +311,23 @@ class DongleController(private val context: Context) {
             context.registerReceiver(receiver, filter)
         }
         try {
-            if (!device.createBond()) return device.bondState == BluetoothDevice.BOND_BONDED
-            return result.await()
+            if (!device.createBond()) {
+                Log.i(TAG, "createBond refused, bond state ${device.bondState}")
+                return device.bondState == BluetoothDevice.BOND_BONDED
+            }
+            var failed = false
+            while (true) {
+                val state = if (failed) {
+                    withTimeoutOrNull(BOND_RETRY_GRACE_MS) { states.receive() }
+                } else {
+                    states.receive()
+                } ?: return device.bondState == BluetoothDevice.BOND_BONDED
+                when (state) {
+                    BluetoothDevice.BOND_BONDED -> return true
+                    BluetoothDevice.BOND_BONDING -> failed = false
+                    BluetoothDevice.BOND_NONE -> failed = true
+                }
+            }
         } finally {
             context.unregisterReceiver(receiver)
         }

@@ -11,6 +11,7 @@ import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import com.keyling.hub.protocol.ProtocolException
 import com.keyling.hub.protocol.Session
 import com.keyling.hub.protocol.Transport
@@ -37,13 +38,22 @@ object BridgeUuids {
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 }
 
+private const val TAG = "BleLink"
 private const val REQUESTED_MTU = 517
 private const val BUSY_RETRIES = 50
 private const val BUSY_RETRY_MS = 10L
-private const val DISCONNECT_TIMEOUT_MS = 2000L
+private const val DISCONNECT_TIMEOUT_MS = 2_000L
+private const val OP_TIMEOUT_MS = 10_000L
+private const val MTU_TIMEOUT_MS = 3_000L
+
+/** Encryption may run first when notifications are enabled, so this waits longer. */
+private const val CCCD_TIMEOUT_MS = 30_000L
+
+/** [GattException.status] when the operation's callback never came. */
+const val STATUS_TIMEOUT = -2
 
 class GattException(operation: String, val status: Int) :
-    IOException("$operation failed (GATT status $status)")
+    IOException(if (status == STATUS_TIMEOUT) "$operation timed out" else "$operation failed (GATT status $status)")
 
 /**
  * The connection went down; [status] is the status Android reported with it. [wasConnected] is
@@ -60,6 +70,12 @@ class LinkLostException(val status: Int, val wasConnected: Boolean = true) :
  */
 @SuppressLint("MissingPermission")
 class BleLink private constructor(val device: BluetoothDevice) : Transport {
+    private enum class Kind { MTU, DISCOVER, WRITE, DESCRIPTOR_WRITE }
+
+    private class Pending(val kind: Kind) {
+        val done = CompletableDeferred<Int>()
+    }
+
     private lateinit var gatt: BluetoothGatt
     private lateinit var cmd: BluetoothGattCharacteristic
     private lateinit var evt: BluetoothGattCharacteristic
@@ -68,7 +84,7 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
     private val connected = CompletableDeferred<Unit>()
     private val _disconnected = CompletableDeferred<Int>()
     private val opMutex = Mutex()
-    @Volatile private var op: CompletableDeferred<Int>? = null
+    @Volatile private var pending: Pending? = null
     @Volatile private var session: Session? = null
     @Volatile private var mtu = 23
 
@@ -77,15 +93,22 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
 
     override val writeSize: Int get() = writeSize(mtu)
 
+    /** Completes the pending operation if it is of [kind]; callbacks of other kinds are unsolicited. */
+    private fun finish(kind: Kind, status: Int) {
+        val op = pending
+        if (op?.kind == kind) op.done.complete(status) else Log.i(TAG, "unsolicited $kind callback, status $status")
+    }
+
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            Log.i(TAG, "connection state $newState, status $status")
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> connected.complete(Unit)
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     gatt.close()
                     val lost = LinkLostException(status, wasConnected = connected.isCompleted)
                     connected.completeExceptionally(lost)
-                    op?.completeExceptionally(lost)
+                    pending?.done?.completeExceptionally(lost)
                     session?.close(lost)
                     _disconnected.complete(status)
                 }
@@ -93,12 +116,14 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            op?.complete(status)
+            Log.i(TAG, "services discovered, status $status")
+            finish(Kind.DISCOVER, status)
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            Log.i(TAG, "MTU $mtu, status $status")
             if (status == BluetoothGatt.GATT_SUCCESS) this@BleLink.mtu = mtu
-            op?.complete(status)
+            finish(Kind.MTU, status)
         }
 
         override fun onCharacteristicWrite(
@@ -106,11 +131,13 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
-            op?.complete(status)
+            if (status != BluetoothGatt.GATT_SUCCESS) Log.i(TAG, "write ${characteristic.uuid}, status $status")
+            finish(Kind.WRITE, status)
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            op?.complete(status)
+            Log.i(TAG, "descriptor write, status $status")
+            finish(Kind.DESCRIPTOR_WRITE, status)
         }
 
         override fun onCharacteristicChanged(
@@ -123,6 +150,7 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
             try {
                 session.onEvt(value)
             } catch (e: ProtocolException) {
+                Log.w(TAG, "bad EVT stream", e)
                 session.close(e)
                 gatt.disconnect()
             }
@@ -140,6 +168,7 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
     companion object {
         /** Connects to [device], negotiates the MTU and finds the bridge service. */
         suspend fun connect(context: Context, device: BluetoothDevice): BleLink {
+            Log.i(TAG, "connecting to ${device.address}, bond state ${device.bondState}")
             val link = BleLink(device)
             link.gatt = if (Build.VERSION.SDK_INT >= 37) {
                 val settings = BluetoothGattConnectionSettings.Builder()
@@ -154,6 +183,7 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
                 link.connected.await()
                 link.setUp()
             } catch (e: Throwable) {
+                Log.i(TAG, "connection setup failed: $e")
                 withContext(NonCancellable) { link.disconnect() }
                 throw e
             }
@@ -162,8 +192,12 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
     }
 
     private suspend fun setUp() {
-        operation("request MTU") { gatt.requestMtu(REQUESTED_MTU).toStatus() }
-        operation("discover services") { gatt.discoverServices().toStatus() }
+        try {
+            operation(Kind.MTU, "request MTU", MTU_TIMEOUT_MS) { gatt.requestMtu(REQUESTED_MTU).toStatus() }
+        } catch (e: GattException) {
+            Log.i(TAG, "MTU request: ${e.message}; using MTU $mtu")
+        }
+        operation(Kind.DISCOVER, "discover services") { gatt.discoverServices().toStatus() }
         val service = gatt.getService(BridgeUuids.SERVICE)
             ?: throw IOException("${device.address} has no bridge service")
         fun characteristic(uuid: UUID) = service.getCharacteristic(uuid)
@@ -184,20 +218,21 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
             throw GattException("enable EVT notifications", -1)
         }
         val cccd = evt.getDescriptor(BridgeUuids.CCCD) ?: throw IOException("EVT has no CCCD")
-        operation("enable EVT notifications") {
+        operation(Kind.DESCRIPTOR_WRITE, "enable EVT notifications", CCCD_TIMEOUT_MS) {
             writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
         }
+        Log.i(TAG, "session started, MTU $mtu")
         return session
     }
 
     override suspend fun writeCmd(bytes: ByteArray) {
-        operation("write CMD") {
+        operation(Kind.WRITE, "write CMD") {
             writeCharacteristic(cmd, bytes, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
         }
     }
 
     override suspend fun writeCtrl() {
-        operation("write CTRL") {
+        operation(Kind.WRITE, "write CTRL") {
             writeCharacteristic(ctrl, byteArrayOf(1), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
         }
     }
@@ -215,30 +250,33 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
     }
 
     /**
-     * Runs one GATT operation: [start] issues it and returns whether Android accepted it, and
-     * the operation's callback completes it with a status.
+     * Runs one GATT operation: [start] issues it and returns Android's status for issuing it,
+     * and the callback of [kind] completes it. Fails if no callback comes within [timeoutMs].
      */
-    private suspend fun operation(name: String, start: () -> Int) = opMutex.withLock {
-        if (_disconnected.isCompleted) throw LinkLostException(_disconnected.await())
-        val done = CompletableDeferred<Int>()
-        op = done
-        try {
-            var started = start()
-            var retries = 0
-            while (started == BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY && retries++ < BUSY_RETRIES) {
-                delay(BUSY_RETRY_MS)
-                started = start()
+    private suspend fun operation(kind: Kind, name: String, timeoutMs: Long = OP_TIMEOUT_MS, start: () -> Int) =
+        opMutex.withLock {
+            if (_disconnected.isCompleted) throw LinkLostException(_disconnected.await())
+            val op = Pending(kind)
+            pending = op
+            try {
+                var started = start()
+                var retries = 0
+                while (started == BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY && retries++ < BUSY_RETRIES) {
+                    delay(BUSY_RETRY_MS)
+                    started = start()
+                }
+                if (started != BluetoothStatusCodes.SUCCESS) throw GattException("$name (start)", started)
+                val status = withTimeoutOrNull(timeoutMs) {
+                    select<Int> {
+                        op.done.onAwait { it }
+                        _disconnected.onAwait { throw LinkLostException(it) }
+                    }
+                } ?: throw GattException(name, STATUS_TIMEOUT)
+                if (status != BluetoothGatt.GATT_SUCCESS) throw GattException(name, status)
+            } finally {
+                pending = null
             }
-            if (started != BluetoothStatusCodes.SUCCESS) throw GattException("$name (start)", started)
-            val status = select {
-                done.onAwait { it }
-                _disconnected.onAwait { throw LinkLostException(it) }
-            }
-            if (status != BluetoothGatt.GATT_SUCCESS) throw GattException(name, status)
-        } finally {
-            op = null
         }
-    }
 
     private fun Boolean.toStatus() = if (this) BluetoothStatusCodes.SUCCESS else BluetoothStatusCodes.ERROR_UNKNOWN
 
