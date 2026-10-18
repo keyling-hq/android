@@ -210,15 +210,22 @@ class BleLink private constructor(val device: BluetoothDevice) : Transport {
     /**
      * Starts a protocol session by enabling EVT notifications. The session closes when the link
      * goes down; [scope] runs its writer.
+     *
+     * For a bonded phone the dongle restores the subscription on encryption and may start a
+     * session before Android is listening, losing its Hello. Disabling notifications first ends
+     * that session, so enabling them starts a new one that arrives here.
      */
     suspend fun startSession(scope: CoroutineScope): Session {
         val session = Session(this, scope)
-        this.session = session
         if (!gatt.setCharacteristicNotification(evt, true)) {
             throw GattException("enable EVT notifications", -1)
         }
         val cccd = evt.getDescriptor(BridgeUuids.CCCD) ?: throw IOException("EVT has no CCCD")
-        operation(Kind.DESCRIPTOR_WRITE, "enable EVT notifications", CCCD_TIMEOUT_MS) {
+        operation(Kind.DESCRIPTOR_WRITE, "disable EVT notifications", CCCD_TIMEOUT_MS) {
+            writeDescriptor(cccd, BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE)
+        }
+        this.session = session
+        operation(Kind.DESCRIPTOR_WRITE, "enable EVT notifications") {
             writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
         }
         Log.i(TAG, "session started, MTU $mtu")
