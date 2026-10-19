@@ -7,6 +7,10 @@ import com.keyling.hub.api.ApprovalStore
 import com.keyling.hub.api.CallerResolver
 import com.keyling.hub.api.PreferencesStore
 import com.keyling.hub.dongle.DongleController
+import com.keyling.hub.layout.HubSettings
+import com.keyling.hub.layout.KeyboardLayout
+import com.keyling.hub.layout.LayoutRegistry
+import com.keyling.hub.layout.UnknownLayoutException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -21,6 +25,17 @@ class HubApp : Application() {
         ApprovalStore(PreferencesStore(getSharedPreferences("approvals", MODE_PRIVATE)), callers::hasCertificate)
     }
     val approvalNotifier by lazy { ApprovalNotifier(this) }
+    val layouts by lazy { LayoutRegistry(this) }
+    val settings by lazy { HubSettings(getSharedPreferences("settings", MODE_PRIVATE)) }
+
+    /**
+     * The layout for a request naming [id], or the default layout if [id] is null. Null means
+     * the dongle translates. Throws [UnknownLayoutException] for an unknown [id].
+     */
+    fun layoutFor(id: String?): KeyboardLayout? {
+        if (id != null) return layouts[id] ?: throw UnknownLayoutException(id)
+        return settings.layout.value?.let { layouts[it] }
+    }
 }
 
 val Context.dongle: DongleController get() = (applicationContext as HubApp).dongle

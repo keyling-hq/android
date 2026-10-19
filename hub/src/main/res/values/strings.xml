@@ -47,6 +47,10 @@
     <string name="approval_allow">Allow</string>
     <string name="approval_deny">Deny</string>
 
+    <string name="layout_title">Keyboard layout</string>
+    <string name="layout_hint">The layout the computer uses. Apps can also choose one for each request.</string>
+    <string name="layout_dongle">Same as the dongle</string>
+
     <string name="apps_title">Apps</string>
     <string name="apps_hint">Apps that asked to type through Keyling. Remove one to be asked again.</string>
     <string name="apps_allowed">Allowed</string>

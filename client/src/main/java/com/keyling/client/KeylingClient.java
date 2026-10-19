@@ -151,9 +151,22 @@ public final class KeylingClient {
         }
     }
 
+    /** Ids of the keyboard layouts the hub offers, or an empty array if not connected. */
+    public String[] getLayouts() {
+        IKeylingHub h = hub;
+        if (h == null) return new String[0];
+        try {
+            String[] layouts = h.getLayouts();
+            return layouts != null ? layouts : new String[0];
+        } catch (RemoteException e) {
+            return new String[0];
+        }
+    }
+
     /**
-     * Types text on the computer. layout names a keyboard layout such as "en-US", or is null for
-     * the hub's default. The callback gets the result once the dongle has queued the text.
+     * Types text on the computer. layout names a keyboard layout such as "en-US" (see
+     * {@link #getLayouts()}), or is null for the hub's default. Text the layout can't type
+     * fails with {@link Keyling#RESULT_INVALID} instead of being typed with characters missing. The callback gets the result once the dongle has queued the text.
      */
     public void typeText(String text, String layout, ResultCallback callback) {
         IKeylingHub h = hub;

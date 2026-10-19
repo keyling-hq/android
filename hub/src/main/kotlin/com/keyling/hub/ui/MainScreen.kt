@@ -8,6 +8,11 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -131,8 +136,10 @@ fun MainScreen(controller: DongleController) {
             message?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
-            if (state is DongleState.Connected) TestCard(controller)
-            AppsCard((context.applicationContext as HubApp).approvals)
+            val app = context.applicationContext as HubApp
+            if (state is DongleState.Connected) TestCard(controller, app)
+            LayoutCard(app, controller)
+            AppsCard(app.approvals)
         }
     }
 }
@@ -245,7 +252,55 @@ private fun hintText(state: DongleState): Int? = when (state) {
 }
 
 @Composable
-private fun TestCard(controller: DongleController) {
+private fun LayoutCard(app: HubApp, controller: DongleController) {
+    val selected by app.settings.layout.collectAsState()
+    val status by controller.status.collectAsState()
+    var choosing by remember { mutableStateOf(false) }
+    val dongleLayout = stringResource(R.string.layout_dongle)
+    val dongleLabel = status?.layout?.takeIf { it.isNotEmpty() }?.let { "$dongleLayout ($it)" } ?: dongleLayout
+    val current = selected?.let { app.layouts[it]?.name } ?: dongleLabel
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.layout_title), style = MaterialTheme.typography.titleMedium)
+            Detail(stringResource(R.string.layout_hint))
+            OutlinedButton({ choosing = true }) { Text(current) }
+        }
+    }
+
+    if (choosing) {
+        val options = listOf<Pair<String?, String>>(null to dongleLabel) + app.layouts.all.map { it.id to it.name }
+        AlertDialog(
+            onDismissRequest = { choosing = false },
+            title = { Text(stringResource(R.string.layout_title)) },
+            text = {
+                LazyColumn {
+                    items(options) { (id, name) ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    app.settings.setLayout(id)
+                                    choosing = false
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = id == selected, onClick = null)
+                            Text(name, Modifier.padding(start = 12.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton({ choosing = false }) { Text(stringResource(R.string.button_cancel)) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun TestCard(controller: DongleController, app: HubApp) {
     val scope = rememberCoroutineScope()
     var text by rememberSaveable { mutableStateOf("") }
     var result by remember { mutableStateOf<String?>(null) }
@@ -267,7 +322,7 @@ private fun TestCard(controller: DongleController) {
                         result = null
                         scope.launch {
                             result = try {
-                                val r = controller.typeText(text)
+                                val r = controller.typeText(text, layout = app.layoutFor(null))
                                 if (r == Result.RESULT_OK) sent else failed.format(r.name)
                             } catch (e: Exception) {
                                 failed.format(e.message)

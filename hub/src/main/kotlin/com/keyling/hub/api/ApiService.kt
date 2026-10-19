@@ -15,6 +15,8 @@ import com.keyling.client.Keyling
 import com.keyling.hub.HubApp
 import com.keyling.hub.dongle.DongleState
 import com.keyling.hub.dongle.DongleUnavailableException
+import com.keyling.hub.layout.UnknownLayoutException
+import com.keyling.hub.layout.UntypableTextException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -101,15 +103,24 @@ class ApiService : Service() {
         override fun typeText(text: String?, layout: String?, callback: IKeylingCallback?) {
             if (text == null) return reply(callback, Keyling.RESULT_INVALID, "no text")
             val caller = approvedCaller(Binder.getCallingUid(), callback) ?: return
-            Log.i(TAG, "${caller.packageName} types ${text.length} chars, layout $layout")
+            val keyboard = try {
+                app.layoutFor(layout)
+            } catch (e: UnknownLayoutException) {
+                return reply(callback, Keyling.RESULT_INVALID, e.message)
+            }
+            Log.i(TAG, "${caller.packageName} types ${text.length} chars, layout ${keyboard?.id ?: "dongle"}")
             app.scope.launch {
                 val (result, message) = try {
-                    when (val r = app.dongle.typeText(text, caller.label)) {
+                    when (val r = app.dongle.typeText(text, caller.label, keyboard)) {
                         Result.RESULT_OK -> Keyling.RESULT_OK to null
                         Result.RESULT_ABORTED -> Keyling.RESULT_ABORTED to null
                         Result.RESULT_INVALID -> Keyling.RESULT_INVALID to "the dongle rejected the request"
                         else -> Keyling.RESULT_FAILED to "the dongle could not type ($r)"
                     }
+                } catch (e: UntypableTextException) {
+                    Keyling.RESULT_INVALID to e.message
+                } catch (e: IllegalArgumentException) {
+                    Keyling.RESULT_FAILED to e.message
                 } catch (e: DongleUnavailableException) {
                     Keyling.RESULT_UNAVAILABLE to e.message
                 } catch (e: IOException) {
@@ -138,6 +149,8 @@ class ApiService : Service() {
         override fun unregisterListener(listener: IKeylingListener?) {
             if (listener != null) listeners.unregister(listener)
         }
+
+        override fun getLayouts(): Array<String> = app.layouts.all.map { it.id }.toTypedArray()
     }
 
     private fun reply(callback: IKeylingCallback?, result: Int, message: String?) {

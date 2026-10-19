@@ -109,3 +109,7 @@ never copied into this repository.
 - The client library (`client/`) is licensed under MIT; see [client/LICENSE](client/LICENSE), so
   that apps under any license can integrate with the hub.
 - The protocol (`proto/`) is licensed under MIT; see its own repository.
+- Most keyboard layout tables in `hub/src/main/assets/layouts/` are derived from
+  [InputStickAPI-Android](https://github.com/inputstick/InputStickAPI-Android) (MIT); see
+  [hub/src/main/assets/licenses/inputstick.txt](hub/src/main/assets/licenses/inputstick.txt).
+  `tools/gen_layouts.py` regenerates them from InputStick's sources and the firmware's keymap.

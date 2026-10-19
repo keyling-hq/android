@@ -27,6 +27,7 @@ import bridge.Status
 import com.keyling.hub.ble.BleLink
 import com.keyling.hub.ble.BridgeUuids
 import com.keyling.hub.ble.LinkLostException
+import com.keyling.hub.layout.KeyboardLayout
 import com.keyling.hub.protocol.Session
 import com.keyling.hub.service.HubService
 import kotlinx.coroutines.CoroutineScope
@@ -173,11 +174,17 @@ class DongleController(private val context: Context) {
         return (state as? DongleState.Connected)?.session ?: throw DongleUnavailableException(state)
     }
 
-    /** Types [text]; [client] names the app it came from, shown while the dongle types it. */
-    suspend fun typeText(text: String, client: String? = null): Result {
+    /**
+     * Types [text], translated with [layout] on the phone, or by the dongle's own layout if null.
+     * [client] names the app it came from, shown while the dongle types it. Throws
+     * [com.keyling.hub.layout.UntypableTextException] before connecting if [layout] lacks a
+     * character.
+     */
+    suspend fun typeText(text: String, client: String? = null, layout: KeyboardLayout? = null): Result {
+        val strokes = layout?.translate(text)
         val session = session()
         _typingClient.value = client
-        return session.typeText(text)
+        return if (strokes != null) session.typeStrokes(strokes) else session.typeText(text)
     }
 
     suspend fun abort() {

@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
             override fun onConnected() {
                 connected = true
                 log("bound, hub API version ${client.apiVersion}")
+                log("layouts: ${client.layouts.joinToString(" ")}")
             }
 
             override fun onDisconnected() {

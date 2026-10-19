@@ -29,4 +29,7 @@ interface IKeylingHub {
     oneway void registerListener(IKeylingListener listener);
 
     oneway void unregisterListener(IKeylingListener listener);
+
+    /** Ids of the keyboard layouts typeText accepts, e.g. "en-US", "es-419", "de-DE". */
+    String[] getLayouts();
 }
